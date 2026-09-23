@@ -101,6 +101,39 @@ an integration, supply the project CA in an `AIVEN_CA_CERT` secret
 The app is reachable at the Runtime service's public URL on port 8080. Health
 check: `GET /actuator/health`.
 
+## Troubleshooting
+
+### `DeserializationService ... Constructor threw exception`
+
+```
+Error creating bean with name 'messagesService' ...
+Unsatisfied dependency ... 'deserializationService' ...
+Failed to instantiate [io.kafbat.ui.service.DeserializationService]
+```
+
+The cause is almost always `KAFKA_CLUSTERS_0_DEFAULTVALUESERDE=SchemaRegistry`
+with no Schema Registry configured. Kafbat resolves the default serde against
+the serdes it managed to register, and the SchemaRegistry serde only registers
+itself when `kafka.clusters.0.schemaRegistry` is set — so the lookup returns
+null and `Preconditions.checkNotNull(..., "Default value serde not found")`
+aborts the startup.
+
+The entrypoint now sets the default serde **only** when `SCHEMA_REGISTRY_URL` is
+present, and strips an inherited `SchemaRegistry` default otherwise. So either:
+
+- set `SCHEMA_REGISTRY_URL`, `SCHEMA_REGISTRY_USER` and
+  `SCHEMA_REGISTRY_PASSWORD` as Runtime variables/secrets (enable Karapace on
+  the Kafka service first), or
+- leave them out and let Kafbat fall back to String/auto-detect.
+
+Check the boot logs for the `[aiven-entrypoint]` lines: they state whether a
+registry was found.
+
+### The UI starts but lists no topics
+
+Check the port. The Runtime integration hands you the **mTLS** port, while
+`SASL_SSL` needs the SASL one — see [the port trap](#️-the-port-trap).
+
 ## 3. Locking down the UI
 
 The UI ships **without authentication**, so anyone with the URL can reach it.

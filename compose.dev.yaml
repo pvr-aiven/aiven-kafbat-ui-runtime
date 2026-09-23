@@ -19,7 +19,8 @@ services:
       - .env
     environment:
       KAFKA_CLUSTER_NAME: ${KAFKA_CLUSTER_NAME:-aiven-kafka-local}
-      KAFKA_CLUSTERS_0_DEFAULTVALUESERDE: SchemaRegistry
+      # DEFAULTVALUESERDE is set by the entrypoint, and only when a Schema
+      # Registry URL is actually configured (see compose.yaml).
       KAFKA_CLUSTERS_0_READONLY: ${KAFKA_CLUSTERS_0_READONLY:-true}
       DYNAMIC_CONFIG_ENABLED: "false"
       LOGGING_LEVEL_IO_KAFBAT_UI: DEBUG

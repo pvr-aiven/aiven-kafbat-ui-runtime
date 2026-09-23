@@ -38,7 +38,9 @@ services:
       SCHEMA_REGISTRY_URL: ${SCHEMA_REGISTRY_URL}
       SCHEMA_REGISTRY_USER: ${SCHEMA_REGISTRY_USER}
       SCHEMA_REGISTRY_PASSWORD: ${SCHEMA_REGISTRY_PASSWORD}
-      KAFKA_CLUSTERS_0_DEFAULTVALUESERDE: SchemaRegistry
+      # Note: DEFAULTVALUESERDE is deliberately NOT set here. The entrypoint
+      # sets it to SchemaRegistry only if SCHEMA_REGISTRY_URL is present —
+      # otherwise Kafbat cannot resolve the serde and refuses to start.
 
       # --- UI behaviour ----------------------------------------------------
       # No authentication on the UI for now: keeping the app read-only limits

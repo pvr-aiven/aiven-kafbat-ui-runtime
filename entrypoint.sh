@@ -173,6 +173,23 @@ if [ -n "${SCHEMA_REGISTRY_URL:-}" ]; then
                KAFKA_CLUSTERS_0_SCHEMAREGISTRYAUTH_PASSWORD
     fi
     log "Schema Registry: $KAFKA_CLUSTERS_0_SCHEMAREGISTRY"
+
+    # Only now is it safe to make SchemaRegistry the default value serde.
+    # Kafbat resolves default-value-serde against the serdes it managed to
+    # register; the SchemaRegistry serde only registers itself when
+    # kafka.clusters.0.schemaRegistry is set. Asking for it without a registry
+    # makes DeserializationService throw at startup ("Default value serde not
+    # found"), and the whole application fails to boot.
+    : "${KAFKA_CLUSTERS_0_DEFAULTVALUESERDE:=SchemaRegistry}"
+    export KAFKA_CLUSTERS_0_DEFAULTVALUESERDE
+else
+    log "No SCHEMA_REGISTRY_URL: leaving the default serde alone (String/auto-detect)."
+    # Defensive: a SchemaRegistry default inherited from the environment would
+    # crash the app, so drop it rather than let the boot fail.
+    if [ "${KAFKA_CLUSTERS_0_DEFAULTVALUESERDE:-}" = "SchemaRegistry" ]; then
+        log "WARNING: ignoring KAFKA_CLUSTERS_0_DEFAULTVALUESERDE=SchemaRegistry (no registry configured)."
+        unset KAFKA_CLUSTERS_0_DEFAULTVALUESERDE
+    fi
 fi
 
 # -----------------------------------------------------------------------------
