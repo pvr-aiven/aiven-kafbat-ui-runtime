@@ -1,0 +1,54 @@
+# Manifest scanned by Aiven Runtime.
+#
+# Runtime detects two things here:
+#   1. `kafbat-ui`: the application to build from the repository's Dockerfile.
+#   2. `kafka-broker`: a recognised Kafka image, so Runtime offers to create an
+#      Aiven for Apache Kafka service. During the scan, click
+#      "Swap with an existing service" to point at your existing service instead.
+#
+# The integration automatically injects KAFKA_BOOTSTRAP_SERVERS,
+# KAFKA_SECURITY_PROTOCOL, KAFKA_ACCESS_KEY, KAFKA_ACCESS_CERT and KAFKA_CA_CERT.
+# Only KAFKA_CA_CERT is actually useful to us (building the truststore): the SASL
+# bootstrap address and the SCRAM credentials are supplied separately, as Runtime
+# variables and secrets (see README).
+
+services:
+  kafbat-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      - kafka-broker
+    environment:
+      # --- Kafka cluster ---------------------------------------------------
+      # Careful: the Runtime integration returns the service's mTLS port.
+      # For SASL_SSL, override this with the SASL port (Console > Overview >
+      # Connection information > SASL) through a Runtime variable.
+      KAFKA_CLUSTER_NAME: ${KAFKA_CLUSTER_NAME:-aiven-kafka}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-SCRAM-SHA-512}
+      KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME}
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD}
+      # Aiven project CA (Runtime secret, or KAFKA_CA_CERT via the integration)
+      AIVEN_CA_CERT: ${AIVEN_CA_CERT:-}
+
+      # --- Schema Registry (Karapace) --------------------------------------
+      SCHEMA_REGISTRY_URL: ${SCHEMA_REGISTRY_URL}
+      SCHEMA_REGISTRY_USER: ${SCHEMA_REGISTRY_USER}
+      SCHEMA_REGISTRY_PASSWORD: ${SCHEMA_REGISTRY_PASSWORD}
+      KAFKA_CLUSTERS_0_DEFAULTVALUESERDE: SchemaRegistry
+
+      # --- UI behaviour ----------------------------------------------------
+      # No authentication on the UI for now: keeping the app read-only limits
+      # the damage until access is restricted.
+      KAFKA_CLUSTERS_0_READONLY: ${KAFKA_CLUSTERS_0_READONLY:-true}
+      DYNAMIC_CONFIG_ENABLED: "false"
+      SERVER_PORT: "8080"
+      LOGGING_LEVEL_IO_KAFBAT_UI: INFO
+
+  # Detected as an Aiven for Apache Kafka service: replace it with your existing
+  # service during the scan ("Swap with an existing service").
+  kafka-broker:
+    image: apache/kafka:3.9

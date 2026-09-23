@@ -1,0 +1,36 @@
+# Local run against the real Aiven for Apache Kafka service.
+#
+#   cp .env.example .env   # then fill it in, or: ./scripts/aiven-env.sh <project> <service>
+#   docker compose -f compose.dev.yaml up --build
+#   open http://localhost:8080
+#
+# No local broker: this validates exactly the configuration that will ship to
+# Runtime.
+
+services:
+  kafbat-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kafbat-ui-aiven
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      KAFKA_CLUSTER_NAME: ${KAFKA_CLUSTER_NAME:-aiven-kafka-local}
+      KAFKA_CLUSTERS_0_DEFAULTVALUESERDE: SchemaRegistry
+      KAFKA_CLUSTERS_0_READONLY: ${KAFKA_CLUSTERS_0_READONLY:-true}
+      DYNAMIC_CONFIG_ENABLED: "false"
+      LOGGING_LEVEL_IO_KAFBAT_UI: DEBUG
+      # Locally the CA is mounted as a file rather than pasted into .env.
+      AIVEN_CA_CERT_FILE: /certs/ca.pem
+    volumes:
+      - ./certs/ca.pem:/certs/ca.pem:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 45s

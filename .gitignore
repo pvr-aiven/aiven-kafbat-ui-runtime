@@ -1,0 +1,71 @@
+# ==============================================================================
+# Secrets — nothing in this section may ever reach the repository.
+# Aiven credentials rotate, but a leaked commit does not.
+# ==============================================================================
+.env
+.env.*
+!.env.example
+*.env
+!example.env
+
+# Aiven / Kafka credential material
+certs/
+secrets/
+*.pem
+*.crt
+*.cer
+*.cert
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+service.key
+service.cert
+ca.pem
+
+# Tokens and CLI state
+.avn*
+aiven-credentials.json
+*.token
+
+# ==============================================================================
+# Local Kafbat UI config
+# ==============================================================================
+# A local application.yml usually holds real bootstrap servers and passwords.
+application-local.yml
+application-local.yaml
+config/local*.yml
+config/local*.yaml
+
+# Compose overrides are per-developer by design
+compose.override.yml
+compose.override.yaml
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# ==============================================================================
+# Docker / build artifacts
+# ==============================================================================
+*.log
+logs/
+tmp/
+.cache/
+
+# ==============================================================================
+# Editors and OS noise
+# ==============================================================================
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini

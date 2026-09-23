@@ -1,0 +1,39 @@
+# Keep the build context minimal, and keep credentials out of the image layers.
+# Only the Dockerfile and entrypoint.sh are actually needed to build.
+.git
+.gitignore
+.github
+README.md
+LICENSE
+
+# Secrets — must never end up in an image layer
+.env
+.env.*
+certs/
+secrets/
+*.pem
+*.crt
+*.cer
+*.cert
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+
+# Compose files are read by Aiven Runtime / the Docker CLI, not needed in the image
+compose.yaml
+compose.*.yaml
+docker-compose*.yml
+docker-compose*.yaml
+
+# Helper scripts run on the developer's machine
+scripts/
+
+# Editors and OS noise
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.log
