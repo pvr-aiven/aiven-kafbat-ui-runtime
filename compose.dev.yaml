@@ -1,11 +1,12 @@
-# Local run against the real Aiven for Apache Kafka service.
+# Local run against real Kafka clusters.
 #
 #   cp .env.example .env   # then fill it in, or: ./scripts/aiven-env.sh <project> <service>
 #   docker compose -f compose.dev.yaml up --build
 #   open http://localhost:8080
 #
 # No local broker: this validates exactly the configuration that will ship to
-# Runtime.
+# Runtime. Everything, including extra clusters (KAFKA_1_*, KAFKA_2_*, ...),
+# comes from .env — add them there and they show up in the UI.
 
 services:
   kafbat-ui:
@@ -18,16 +19,14 @@ services:
     env_file:
       - .env
     environment:
-      KAFKA_CLUSTER_NAME: ${KAFKA_CLUSTER_NAME:-aiven-kafka-local}
-      # DEFAULTVALUESERDE is set by the entrypoint, and only when a Schema
-      # Registry URL is actually configured (see compose.yaml).
-      KAFKA_CLUSTERS_0_READONLY: ${KAFKA_CLUSTERS_0_READONLY:-true}
       DYNAMIC_CONFIG_ENABLED: "false"
       LOGGING_LEVEL_IO_KAFBAT_UI: DEBUG
-      # Locally the CA is mounted as a file rather than pasted into .env.
+      # Locally the CAs are mounted as files rather than pasted into .env.
+      # One file per cluster that needs a private CA:
+      #   KAFKA_0_CA_CERT_FILE=/certs/ca-0.pem, KAFKA_1_CA_CERT_FILE=...
       AIVEN_CA_CERT_FILE: /certs/ca.pem
     volumes:
-      - ./certs/ca.pem:/certs/ca.pem:ro
+      - ./certs:/certs:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]

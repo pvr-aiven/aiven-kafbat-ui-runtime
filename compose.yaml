@@ -11,6 +11,12 @@
 # Only KAFKA_CA_CERT is actually useful to us (building the truststore): the SASL
 # bootstrap address and the SCRAM credentials are supplied separately, as Runtime
 # variables and secrets (see README).
+#
+# MULTI-CLUSTER: this file wires cluster 0 through the single-cluster shorthand.
+# Additional clusters are declared entirely with KAFKA_1_*, KAFKA_2_*, ...
+# variables added in the Runtime UI — no change to this file is needed, since
+# Runtime can only integrate one Kafka service per application anyway. See the
+# "Several clusters in one UI" section of the README.
 
 services:
   kafbat-ui:
@@ -22,7 +28,7 @@ services:
     depends_on:
       - kafka-broker
     environment:
-      # --- Kafka cluster ---------------------------------------------------
+      # --- Kafka cluster 0 -------------------------------------------------
       # Careful: the Runtime integration returns the service's mTLS port.
       # For SASL_SSL, override this with the SASL port (Console > Overview >
       # Connection information > SASL) through a Runtime variable.
@@ -39,13 +45,13 @@ services:
       SCHEMA_REGISTRY_USER: ${SCHEMA_REGISTRY_USER}
       SCHEMA_REGISTRY_PASSWORD: ${SCHEMA_REGISTRY_PASSWORD}
       # Note: DEFAULTVALUESERDE is deliberately NOT set here. The entrypoint
-      # sets it to SchemaRegistry only if SCHEMA_REGISTRY_URL is present —
-      # otherwise Kafbat cannot resolve the serde and refuses to start.
+      # sets it to SchemaRegistry only if a registry URL is present for that
+      # cluster — otherwise Kafbat cannot resolve the serde and refuses to start.
 
       # --- UI behaviour ----------------------------------------------------
-      # No authentication on the UI for now: keeping the app read-only limits
+      # No authentication on the UI for now: keeping clusters read-only limits
       # the damage until access is restricted.
-      KAFKA_CLUSTERS_0_READONLY: ${KAFKA_CLUSTERS_0_READONLY:-true}
+      KAFKA_0_READONLY: ${KAFKA_0_READONLY:-true}
       DYNAMIC_CONFIG_ENABLED: "false"
       SERVER_PORT: "8080"
       LOGGING_LEVEL_IO_KAFBAT_UI: INFO
