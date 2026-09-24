@@ -11,7 +11,7 @@ alongside them.
 - [1. Run it locally first](#1-run-it-locally-first)
 - [2. Deploy to Aiven Runtime](#2-deploy-to-aiven-runtime)
 - [3. Several clusters in one UI](#3-several-clusters-in-one-ui)
-- [4. Locking down the UI](#4-locking-down-the-ui)
+- [4. Securing access to the UI](#4-securing-access-to-the-ui)
 - [Variable reference](#variable-reference)
 - [Troubleshooting](#troubleshooting)
 
@@ -101,20 +101,65 @@ Then, in the Console:
 
 | Key | Type | Value |
 | --- | --- | --- |
-| `KAFKA_BOOTSTRAP_SERVERS` | variable | `host:SASL_PORT` (overrides the integration) |
+| `KAFKA_0_BOOTSTRAP_SERVERS` | variable | `host:SASL_PORT` — use the indexed name here, see the note below |
 | `KAFKA_SASL_USERNAME` | variable | `avnadmin`, or a dedicated user |
-| `KAFKA_SASL_PASSWORD` | **secret** | that user's password |
-| `KAFKA_SASL_MECHANISM` | variable | `SCRAM-SHA-512` |
-| `SCHEMA_REGISTRY_URL` | variable | Karapace URI (`https://…`) |
-| `SCHEMA_REGISTRY_USER` | variable | `avnadmin` |
-| `SCHEMA_REGISTRY_PASSWORD` | **secret** | Karapace password |
-| `KAFKA_CLUSTER_NAME` | variable | Display name in the UI |
+| `KAFKA_0_SASL_PASSWORD` | **secret** | that user's password |
+| `KAFKA_0_SASL_MECHANISM` | variable | `SCRAM-SHA-512` |
+| `KAFKA_0_SCHEMA_REGISTRY_URL` | variable | Karapace URI (`https://…`) |
+| `KAFKA_0_SCHEMA_REGISTRY_USER` | variable | `avnadmin` |
+| `KAFKA_0_SCHEMA_REGISTRY_PASSWORD` | **secret** | Karapace password |
+| `KAFKA_0_NAME` | variable | Display name in the UI |
 | `KAFKA_0_READONLY` | variable | `true` while the UI is unprotected |
 
-These unindexed names are a shorthand for cluster 0. `KAFKA_CA_CERT` is injected
-by the integration, so there is nothing to do for the CA. Without an integration,
-supply the project CA in an `AIVEN_CA_CERT` secret
+`KAFKA_CA_CERT` comes from the integration, so there is nothing to do for the
+CA. Without an integration, supply the project CA in a `KAFKA_0_CA_CERT` secret
 (`avn project ca-get --project PROJECT`).
+
+The unindexed shorthand (`KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_SASL_USERNAME`,
+`SCHEMA_REGISTRY_URL`, `AIVEN_CA_CERT`, …) still works and maps to cluster 0 —
+useful for a single-cluster setup, and kept for backwards compatibility — but
+the indexed form above is the one to reach for. Read on for why.
+
+### The integration's variables keep their own names
+
+The Runtime UI will keep showing `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_CA_CERT`,
+`KAFKA_ACCESS_KEY` and friends, not `KAFKA_0_*`. That is correct: those keys are
+owned by the service integration, and the mapping to cluster 0 happens inside
+the container at startup, not in the Runtime configuration. Nothing needs
+renaming for it to work — the logs are the proof:
+
+```
+[aiven-entrypoint] CA imported: ca-0
+[aiven-entrypoint] Cluster 0 "aiven-prod": host:12693 — SASL_SSL / SCRAM-SHA-512 as kafbat-ui …
+```
+
+**Prefer the indexed names for anything you override.** Runtime treats keys
+managed by an integration as its own, so a manual variable that reuses one of
+them is at best confusing and may be ignored. Setting the SASL port as
+`KAFKA_0_BOOTSTRAP_SERVERS` instead of `KAFKA_BOOTSTRAP_SERVERS` sidesteps the
+clash entirely: the indexed value always wins over the shorthand, so the
+integration's mTLS address and its `KAFKA_SECURITY_PROTOCOL=SSL` are ignored
+while its CA is still used.
+
+If you would rather have the integration expose the indexed names directly, its
+`exposed_values` keys are configurable:
+
+```bash
+avn service integration-update INTEGRATION_ID --project PROJECT \
+  --user-config-json '{
+    "service_type": "kafka",
+    "exposed_values": {
+      "ca_cert":          {"environment_variable_key": "KAFKA_0_CA_CERT"},
+      "bootstrap_servers":{"environment_variable_key": "KAFKA_0_BOOTSTRAP_SERVERS_MTLS"},
+      "access_key":       {"environment_variable_key": "KAFKA_0_ACCESS_KEY"},
+      "access_cert":      {"environment_variable_key": "KAFKA_0_ACCESS_CERT"},
+      "security_protocol":{"environment_variable_key": "KAFKA_IGNORED_PROTOCOL"}
+    }
+  }'
+```
+
+Purely cosmetic, and note the mTLS bootstrap is deliberately parked on an unused
+key so it cannot shadow the SASL one.
 
 The app is then reachable at the Runtime service's public URL on port 8080.
 Health check: `GET /actuator/health`.
@@ -139,6 +184,31 @@ KAFKA_0_SASL_PASSWORD=<secret>             KAFKA_1_SASL_PASSWORD=<secret>
 KAFKA_0_CA_CERT=<secret, PEM>              KAFKA_1_CA_CERT=<secret, PEM>
 KAFKA_0_READONLY=true                      KAFKA_1_READONLY=false
 ```
+
+### Adding a second cluster, minimally
+
+For another Aiven service, three variables and one secret are enough:
+
+```bash
+KAFKA_1_NAME=aiven-staging
+KAFKA_1_BOOTSTRAP_SERVERS=kafka-stg-myorg.aivencloud.com:12693   # SASL port
+KAFKA_1_SASL_USERNAME=avnadmin
+KAFKA_1_SASL_PASSWORD=…        # secret
+```
+
+Then redeploy. Whether a CA is needed depends on where that service lives:
+
+- **Same Aiven project as cluster 0** → nothing to add. The truststore is shared
+  between clusters, and the project CA is already in it.
+- **Different project or organisation** → add its CA as a `KAFKA_1_CA_CERT`
+  secret (`avn project ca-get --project OTHER_PROJECT`), since that project has
+  its own CA.
+- **Publicly trusted certificate** (Confluent Cloud, a broker behind a public
+  CA) → nothing to add; the store is seeded from the JVM's `cacerts`.
+
+Optional on top: `KAFKA_1_SCHEMA_REGISTRY_URL` + `_USER` + `_PASSWORD` for
+Karapace, `KAFKA_1_READONLY=false` to allow writes, `KAFKA_1_CONNECT_URL` for
+Kafka Connect.
 
 Indices need not be contiguous: gaps are skipped and Kafbat still receives a
 contiguous list, which its config binding requires. So deleting cluster 1 of
@@ -203,7 +273,9 @@ KAFKA_3_SASL_PASSWORD=…                       # secret, API secret
 Points worth noting in that example:
 
 - **One CA per Aiven project.** Two projects, two `KAFKA_N_CA_CERT` secrets. They
-  land in the same truststore under distinct aliases, so they do not collide.
+  land in the same truststore under distinct aliases, so they do not collide —
+  and because the store is shared, two services in the *same* project only need
+  the CA once.
 - **Confluent Cloud needs no CA.** Its chain is publicly trusted, and the
   entrypoint seeds the truststore from the JVM's `cacerts`, so public CAs keep
   working even once private ones are added.
@@ -247,25 +319,108 @@ configuration surface, mounting a YAML file
 variables; see the [Kafbat configuration file
 reference](https://ui.docs.kafbat.io/configuration/configuration-file).
 
-## 4. Locking down the UI
+## 4. Securing access to the UI
 
-The UI ships **without authentication**, so anyone with the URL can reach every
-cluster it is wired to. This matters more with each cluster you add, which is why
-`READONLY` defaults to `true`: no one can create, produce or delete from the UI.
+**A Runtime application is served on a public URL, and Kafbat UI has no
+authentication out of the box.** Whoever has the link can browse every cluster
+wired above, read message payloads included. There is no IP allowlist on Runtime
+applications, so authentication is the control — not obscurity of the URL.
 
-To close it off, two options on the Kafbat side:
+The entrypoint therefore refuses to run wide open *and* writable: with no
+authentication configured it forces every cluster to read-only, whatever
+`KAFKA_N_READONLY` says, and prints a warning banner. An open UI that can delete
+a production topic is a much worse failure than an inconvenient one. To opt out
+deliberately, set `ALLOW_UNAUTHENTICATED_WRITES=true`.
 
-```yaml
-# Simple form login
-AUTH_TYPE: LOGIN_FORM
-SPRING_SECURITY_USER_NAME: admin
-SPRING_SECURITY_USER_PASSWORD: <Runtime secret>
+Pick one of the two shapes below.
+
+### Option A — single login (quickest)
+
+Two variables, one of them a secret:
+
+| Key | Type | Value |
+| --- | --- | --- |
+| `UI_AUTH_USERNAME` | variable | e.g. `admin` |
+| `UI_AUTH_PASSWORD` | **secret** | a long random string |
+
+The entrypoint turns these into `AUTH_TYPE=LOGIN_FORM` and Spring's user
+properties. Fine for a small team, with two real limits: Kafbat basic auth
+supports **exactly one user**, and it is **incompatible with RBAC** — so
+everyone shares one credential and gets the same rights. Rotating the password
+means redeploying.
+
+Good enough for a single cluster. With production in the list, prefer option B.
+
+### Option B — OAuth2/OIDC + RBAC (recommended beyond one cluster)
+
+This is what makes per-cluster rights possible: read-only on production, writes
+on staging, nothing for everyone else. Authentication comes from your provider;
+authorisation from a roles file.
+
+Set `AUTH_TYPE=OAUTH2` plus your provider's client config. Google Workspace, for
+example:
+
+```bash
+AUTH_TYPE=OAUTH2
+AUTH_OAUTH2_CLIENT_GOOGLE_PROVIDER=google
+AUTH_OAUTH2_CLIENT_GOOGLE_CLIENTID=xxx.apps.googleusercontent.com
+AUTH_OAUTH2_CLIENT_GOOGLE_CLIENTSECRET=…          # secret
+AUTH_OAUTH2_CLIENT_GOOGLE_USER_NAME_ATTRIBUTE=email
+AUTH_OAUTH2_CLIENT_GOOGLE_CUSTOM_PARAMS_TYPE=google
+AUTH_OAUTH2_CLIENT_GOOGLE_CUSTOM_PARAMS_ALLOWEDDOMAIN=aiven.io
 ```
 
-or OAuth2/OIDC (`AUTH_TYPE: OAUTH2`) against your company provider. With several
-clusters, Kafbat **RBAC** is what you actually want — roles are scoped per
-cluster, so a team can be given read access to staging and nothing on
-production. Say the word and I'll add the config.
+Okta, Azure AD or Keycloak follow the same shape with `custom-params.type=oauth`
+and `roles-field` pointing at the claim that carries the groups — see the
+[Kafbat OAuth2 reference](https://ui.docs.kafbat.io/configuration/authentication/for-the-ui/oauth2).
+Two things to get right:
+
+- The **redirect URI** must be registered with the provider as
+  `https://<your-runtime-url>/login/oauth2/code/<client-name>`. The Runtime URL
+  only exists after the first deploy, so this is a two-step setup: deploy, read
+  the URL, register it, then add the OAuth variables and redeploy.
+- `roles-field` (or `allowedDomain` for Google) is what RBAC matches on. Without
+  it, roles never resolve and everyone falls back to the default role.
+
+Then the roles. `config/roles.example.yml` in this repo is a working four-role
+model — company-wide read-only, owning team writable on staging, narrowly scoped
+writes on production, platform admins. Copy it and edit:
+
+```bash
+cp config/roles.example.yml config/roles.yml
+# edit: cluster names must match KAFKA_N_NAME, subjects must match your provider
+git commit -am "Kafbat RBAC roles" && git push
+```
+
+The Dockerfile bakes `config/` into the image — Runtime has no volumes, so the
+file has to travel with the build — and the entrypoint loads `config/roles.yml`
+when `AUTH_TYPE` is `OAUTH2` or `LDAP`. It is safe to commit: it contains group
+names and email domains, never credentials. The client secret stays a Runtime
+secret.
+
+With no roles file, every authenticated user gets full access. The logs say
+which case you are in:
+
+```
+[aiven-entrypoint] UI auth: AUTH_TYPE=OAUTH2 (set explicitly)
+[aiven-entrypoint] RBAC roles loaded from /config/roles.yml
+```
+
+### Defence in depth, regardless of the option
+
+- **A dedicated Kafka user per cluster**, with ACLs limited to the topics the UI
+  should expose. The UI cannot show what its credentials cannot read — this is
+  the only limit that still holds if the UI itself is compromised.
+- **`KAFKA_N_READONLY=true` on production**, even with RBAC in place.
+- **`DYNAMIC_CONFIG_ENABLED=false`** (the default here). With it on, any user who
+  reaches the UI can add a cluster of their own from the web form.
+- **Field masking** for topics carrying personal data, so payloads are redacted
+  in the UI:
+  `KAFKA_CLUSTERS_0_MASKING_0_TYPE=MASK`,
+  `..._FIELDS_0=email`,
+  `..._TOPICVALUESPATTERN=customers\..*`.
+- **Audit logging**: `KAFKA_CLUSTERS_0_AUDIT_TOPICAUDITENABLED=true` records who
+  did what, to a Kafka topic.
 
 ## Variable reference
 
@@ -286,6 +441,15 @@ production. Say the word and I'll add the config.
 | `KAFKA_N_CONNECT_URL` | no | Kafka Connect REST endpoint. |
 | `KAFKA_N_CONNECT_USER` / `_PASSWORD` | no | Basic auth on Connect. |
 | `KAFKA_N_READONLY` | no | `true` by default. |
+
+UI access control:
+
+| Variable | Notes |
+| --- | --- |
+| `UI_AUTH_USERNAME` / `UI_AUTH_PASSWORD` | Enables `LOGIN_FORM` with a single user. Password belongs in a secret. |
+| `AUTH_TYPE` | Set directly for `OAUTH2` / `LDAP`; takes priority over the above. |
+| `UI_ROLES_FILE` | RBAC roles path, default `/config/roles.yml`. |
+| `ALLOW_UNAUTHENTICATED_WRITES` | `true` lifts the forced read-only when no auth is configured. |
 
 Global knobs: `KAFKA_MAX_CLUSTERS` (how many indices are scanned, default 16),
 `AIVEN_CERT_DIR`, `AIVEN_TRUSTSTORE_PASSWORD`, `SERVER_PORT`,
@@ -314,6 +478,14 @@ when `KAFKA_N_SCHEMA_REGISTRY_URL` is present, and strips an inherited
 supply the registry variables, or leave them out and let Kafbat fall back to
 String/auto-detect.
 
+### Runtime still lists `KAFKA_CA_CERT`, not `KAFKA_0_CA_CERT`
+
+Expected. Those variables belong to the service integration and keep their own
+names; the entrypoint maps them onto cluster 0 at startup. See
+[the integration's variables keep their own names](#the-integrations-variables-keep-their-own-names).
+Check the `[aiven-entrypoint]` log lines to confirm the CA and the protocol that
+were actually applied.
+
 ### One cluster is missing from the UI
 
 Its `KAFKA_N_BOOTSTRAP_SERVERS` is empty — that variable is the declaration. The
@@ -329,10 +501,10 @@ handshake. The per-cluster log line shows which protocol was actually applied.
 
 ### `SSLHandshakeException: PKIX path building failed`
 
-A private CA is missing from the truststore. Each cluster with a private CA needs
-its own `KAFKA_N_CA_CERT` — a CA given for cluster 0 does not cover cluster 1 if
-they belong to different Aiven projects. The `CA imported: ca-N` lines list what
-made it in.
+A private CA is missing from the truststore. The store is shared, so a CA given
+for cluster 0 also covers cluster 1 **in the same Aiven project** — but a service
+in a different project has a different CA and needs its own `KAFKA_N_CA_CERT`.
+The `CA imported: ca-N` lines list what made it in.
 
 ### Karapace works from curl but not from the UI
 

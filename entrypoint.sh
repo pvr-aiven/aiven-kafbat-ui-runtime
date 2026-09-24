@@ -290,6 +290,19 @@ if [ "$dst_index" -eq 0 ]; then
 fi
 log "$dst_index cluster(s) configured"
 
+# Second pass: the truststore is shared, so every cluster can use it even if it
+# brought no CA of its own. This is what makes a second service in the SAME
+# Aiven project work without repeating the CA, and it is harmless for clusters
+# with a public chain, since the store is seeded from the JVM cacerts.
+if [ -f "$TRUSTSTORE" ]; then
+    i=0
+    while [ "$i" -lt "$dst_index" ]; do
+        setvar "KAFKA_CLUSTERS_${i}_SSL_TRUSTSTORELOCATION" "$TRUSTSTORE"
+        setvar "KAFKA_CLUSTERS_${i}_SSL_TRUSTSTOREPASSWORD" "$TRUSTSTORE_PASSWORD"
+        i=$((i + 1))
+    done
+fi
+
 # -----------------------------------------------------------------------------
 # 4. JVM-wide trust, for HTTPS calls to Karapace and Kafka Connect
 # -----------------------------------------------------------------------------
@@ -301,7 +314,74 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 5. Miscellaneous
+# 5. UI access control
+# -----------------------------------------------------------------------------
+# A Runtime application has a public URL, and Kafbat UI has no authentication by
+# default: anyone with the link reaches every cluster wired above. Three shapes
+# are supported here, in order of preference:
+#
+#   1. OAuth2/OIDC + RBAC  — set AUTH_TYPE=OAUTH2 and the AUTH_OAUTH2_* values,
+#      and ship a /config/roles.yml (see config/roles.example.yml).
+#   2. Single local login  — set UI_AUTH_USERNAME and UI_AUTH_PASSWORD.
+#      Kafbat's basic auth supports exactly one user and is incompatible with
+#      RBAC, so roles cannot be layered on top.
+#   3. Nothing             — every cluster is forced read-only, unless
+#      ALLOW_UNAUTHENTICATED_WRITES=true says you accept the risk.
+ROLES_FILE="${UI_ROLES_FILE:-/config/roles.yml}"
+
+if [ -n "${AUTH_TYPE:-}" ]; then
+    log "UI auth: AUTH_TYPE=$AUTH_TYPE (set explicitly)"
+    UI_PROTECTED=yes
+
+elif [ -n "${UI_AUTH_USERNAME:-}" ] && [ -n "${UI_AUTH_PASSWORD:-}" ]; then
+    AUTH_TYPE=LOGIN_FORM
+    export AUTH_TYPE
+    setvar SPRING_SECURITY_USER_NAME "$UI_AUTH_USERNAME"
+    setvar SPRING_SECURITY_USER_PASSWORD "$UI_AUTH_PASSWORD"
+    log "UI auth: LOGIN_FORM, single user \"$UI_AUTH_USERNAME\""
+    UI_PROTECTED=yes
+    if [ -f "$ROLES_FILE" ]; then
+        log "NOTE: $ROLES_FILE is ignored — Kafbat basic auth cannot use RBAC."
+    fi
+
+else
+    UI_PROTECTED=no
+    log "=============================================================="
+    log "WARNING: the UI is NOT protected. Anyone with the URL can read"
+    log "         every cluster listed above."
+    log "         Set UI_AUTH_USERNAME + UI_AUTH_PASSWORD, or AUTH_TYPE=OAUTH2."
+    log "=============================================================="
+fi
+
+# RBAC roles, only meaningful with a real identity provider.
+if [ "${AUTH_TYPE:-}" = "OAUTH2" ] || [ "${AUTH_TYPE:-}" = "LDAP" ]; then
+    if [ -f "$ROLES_FILE" ]; then
+        JAVA_OPTS="${JAVA_OPTS:-} -Dspring.config.additional-location=$ROLES_FILE"
+        export JAVA_OPTS
+        log "RBAC roles loaded from $ROLES_FILE"
+    else
+        log "NOTE: no $ROLES_FILE — every authenticated user gets full access."
+        log "      Copy config/roles.example.yml to config/roles.yml to scope it."
+    fi
+fi
+
+# With no authentication, refuse to expose write operations. This overrides any
+# KAFKA_N_READONLY=false, because an open UI that can delete topics is a much
+# worse failure than an inconvenient one.
+if [ "$UI_PROTECTED" = no ] && [ "${ALLOW_UNAUTHENTICATED_WRITES:-false}" != "true" ]; then
+    i=0
+    while [ "$i" -lt "$dst_index" ]; do
+        if [ "$(getvar "KAFKA_CLUSTERS_${i}_READONLY")" != "true" ]; then
+            log "Forcing cluster $i to read-only (no UI authentication)."
+            eval "KAFKA_CLUSTERS_${i}_READONLY=true"
+            export "KAFKA_CLUSTERS_${i}_READONLY"
+        fi
+        i=$((i + 1))
+    done
+fi
+
+# -----------------------------------------------------------------------------
+# 6. Miscellaneous
 # -----------------------------------------------------------------------------
 # Aiven Runtime routes traffic to the exposed port; 8080 is the image's own.
 : "${SERVER_PORT:=8080}"

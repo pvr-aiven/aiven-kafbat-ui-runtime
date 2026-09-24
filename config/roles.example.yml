@@ -1,0 +1,143 @@
+# Kafbat UI RBAC roles — example.
+#
+# Copy to config/roles.yml and edit. The entrypoint loads config/roles.yml
+# automatically when AUTH_TYPE is OAUTH2 or LDAP; with no file, every
+# authenticated user gets full access to every cluster.
+#
+# This file is safe to commit: it holds group names and email domains, never
+# credentials. The OAuth client secret stays a Runtime secret.
+#
+# Cluster names here must match KAFKA_N_NAME exactly.
+# Actions per resource:
+#   clusterconfig       view, edit
+#   topic               view, create, edit, delete, messages_read,
+#                       messages_produce, messages_delete, analysis_run,
+#                       analysis_view
+#   consumer            view, delete, reset_offsets
+#   schema              view, create, delete, edit, modify_global_compatibility
+#   connect / connector view, edit, create, delete, operate, reset_offsets
+#   acl                 view, edit
+#   ksql                execute
+# `actions: all` grants everything for that resource.
+
+rbac:
+  # Applied to anyone who authenticates but matches no role below.
+  # Read-only on non-production clusters, nothing on production.
+  default-role:
+    permissions:
+      - resource: clusterconfig
+        actions: [view]
+      - resource: topic
+        value: ".*"
+        actions: [view, messages_read, analysis_view]
+      - resource: consumer
+        value: ".*"
+        actions: [view]
+      - resource: schema
+        value: ".*"
+        actions: [view]
+
+  roles:
+    # --- Everyone in the company: read-only everywhere ----------------------
+    - name: "viewers"
+      clusters:
+        - aiven-prod
+        - aiven-staging
+      subjects:
+        # Google Workspace domain. For Okta/Azure use:
+        #   - provider: oauth
+        #     type: role
+        #     value: "kafka-viewers"
+        - provider: oauth_google
+          type: domain
+          value: "aiven.io"
+      permissions:
+        - resource: clusterconfig
+          actions: [view]
+        - resource: topic
+          value: ".*"
+          actions: [view, messages_read, analysis_view]
+        - resource: consumer
+          value: ".*"
+          actions: [view]
+        - resource: schema
+          value: ".*"
+          actions: [view]
+        - resource: connect
+          value: ".*"
+          actions: [view]
+        - resource: acl
+          actions: [view]
+
+    # --- Owning team: full control on staging, read-only on production ------
+    - name: "streaming-team-staging"
+      clusters:
+        - aiven-staging
+      subjects:
+        - provider: oauth
+          type: role
+          value: "streaming-team"
+      permissions:
+        - resource: clusterconfig
+          actions: all
+        - resource: topic
+          value: ".*"
+          actions: all
+        - resource: consumer
+          value: ".*"
+          actions: all
+        - resource: schema
+          value: ".*"
+          actions: all
+        - resource: connect
+          value: ".*"
+          actions: all
+
+    # --- Production writes, scoped to the topics that team owns -------------
+    # Deliberately narrow: no topic deletion, and only its own prefix.
+    - name: "streaming-team-prod"
+      clusters:
+        - aiven-prod
+      subjects:
+        - provider: oauth
+          type: role
+          value: "streaming-team"
+      permissions:
+        - resource: topic
+          value: "streaming\\..*"
+          actions: [view, create, edit, messages_read, messages_produce, analysis_run, analysis_view]
+        - resource: consumer
+          value: "streaming\\..*"
+          actions: [view, reset_offsets]
+        - resource: schema
+          value: "streaming\\..*"
+          actions: [view, create, edit]
+
+    # --- Platform admins ----------------------------------------------------
+    - name: "admins"
+      clusters:
+        - aiven-prod
+        - aiven-staging
+      subjects:
+        - provider: oauth
+          type: role
+          value: "kafka-admins"
+      permissions:
+        - resource: applicationconfig
+          actions: all
+        - resource: clusterconfig
+          actions: all
+        - resource: topic
+          value: ".*"
+          actions: all
+        - resource: consumer
+          value: ".*"
+          actions: all
+        - resource: schema
+          value: ".*"
+          actions: all
+        - resource: connect
+          value: ".*"
+          actions: all
+        - resource: acl
+          actions: [view, edit]

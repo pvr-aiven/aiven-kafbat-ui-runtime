@@ -29,28 +29,40 @@ services:
       - kafka-broker
     environment:
       # --- Kafka cluster 0 -------------------------------------------------
-      # Careful: the Runtime integration returns the service's mTLS port.
-      # For SASL_SSL, override this with the SASL port (Console > Overview >
-      # Connection information > SASL) through a Runtime variable.
-      KAFKA_CLUSTER_NAME: ${KAFKA_CLUSTER_NAME:-aiven-kafka}
-      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-      KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-SCRAM-SHA-512}
-      KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME}
-      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD}
-      # Aiven project CA (Runtime secret, or KAFKA_CA_CERT via the integration)
-      AIVEN_CA_CERT: ${AIVEN_CA_CERT:-}
+      # The integration owns KAFKA_BOOTSTRAP_SERVERS, KAFKA_CA_CERT,
+      # KAFKA_ACCESS_* and KAFKA_SECURITY_PROTOCOL, and keeps those names in the
+      # Runtime UI. The entrypoint maps them onto cluster 0, so the CA is taken
+      # care of. Everything you set yourself uses the INDEXED names, which take
+      # priority and never clash with an integration-managed key.
+      #
+      # Careful: the integration's bootstrap address is the service's mTLS port.
+      # SASL_SSL needs the SASL one (Console > Overview > Connection information
+      # > SASL), which is why it is set here as KAFKA_0_BOOTSTRAP_SERVERS.
+      KAFKA_0_NAME: ${KAFKA_0_NAME:-aiven-kafka}
+      KAFKA_0_BOOTSTRAP_SERVERS: ${KAFKA_0_BOOTSTRAP_SERVERS}
+      KAFKA_0_SASL_MECHANISM: ${KAFKA_0_SASL_MECHANISM:-SCRAM-SHA-512}
+      KAFKA_0_SASL_USERNAME: ${KAFKA_0_SASL_USERNAME}
+      KAFKA_0_SASL_PASSWORD: ${KAFKA_0_SASL_PASSWORD}
+      # Only needed without an integration (otherwise KAFKA_CA_CERT covers it).
+      KAFKA_0_CA_CERT: ${KAFKA_0_CA_CERT:-}
 
       # --- Schema Registry (Karapace) --------------------------------------
-      SCHEMA_REGISTRY_URL: ${SCHEMA_REGISTRY_URL}
-      SCHEMA_REGISTRY_USER: ${SCHEMA_REGISTRY_USER}
-      SCHEMA_REGISTRY_PASSWORD: ${SCHEMA_REGISTRY_PASSWORD}
+      KAFKA_0_SCHEMA_REGISTRY_URL: ${KAFKA_0_SCHEMA_REGISTRY_URL}
+      KAFKA_0_SCHEMA_REGISTRY_USER: ${KAFKA_0_SCHEMA_REGISTRY_USER}
+      KAFKA_0_SCHEMA_REGISTRY_PASSWORD: ${KAFKA_0_SCHEMA_REGISTRY_PASSWORD}
       # Note: DEFAULTVALUESERDE is deliberately NOT set here. The entrypoint
       # sets it to SchemaRegistry only if a registry URL is present for that
       # cluster — otherwise Kafbat cannot resolve the serde and refuses to start.
 
+      # --- UI access control -----------------------------------------------
+      # The Runtime URL is public and Kafbat has no auth by default. Set these
+      # two as a Runtime variable + secret for a single login, or set
+      # AUTH_TYPE=OAUTH2 with your provider's client config for OAuth2 + RBAC.
+      # With neither, the entrypoint forces every cluster read-only.
+      UI_AUTH_USERNAME: ${UI_AUTH_USERNAME:-}
+      UI_AUTH_PASSWORD: ${UI_AUTH_PASSWORD:-}
+
       # --- UI behaviour ----------------------------------------------------
-      # No authentication on the UI for now: keeping clusters read-only limits
-      # the damage until access is restricted.
       KAFKA_0_READONLY: ${KAFKA_0_READONLY:-true}
       DYNAMIC_CONFIG_ENABLED: "false"
       SERVER_PORT: "8080"
